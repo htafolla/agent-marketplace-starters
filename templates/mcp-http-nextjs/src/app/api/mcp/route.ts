@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { TOOL_DEFINITIONS, TOOL_HANDLERS, type ToolResult } from "@/lib/mcp-server";
 import { rateLimit } from "@/lib/rate-limit";
-import { sanitizeError } from "@/lib/logger";
+import { sanitizeError, generateRequestId } from "@/lib/logger";
 
 // JSON-RPC 2.0 request schema
 const JsonRpcRequestSchema = z.object({
@@ -26,6 +26,8 @@ const JsonRpcRequestSchema = z.object({
  * Methods: tools/list, tools/call
  */
 export async function POST(request: NextRequest) {
+  const requestId = generateRequestId();
+
   // Rate limit: 30 requests per minute per IP
   const ip = request.headers.get("x-forwarded-for") || request.ip || "unknown";
   const { success: rateLimitOk } = rateLimit(`mcp:${ip}`, {
@@ -36,7 +38,7 @@ export async function POST(request: NextRequest) {
   if (!rateLimitOk) {
     return NextResponse.json(
       { jsonrpc: "2.0", id: null, error: { code: -32000, message: "Rate limit exceeded" } },
-      { status: 429 }
+      { status: 429, headers: { "X-Request-Id": requestId } }
     );
   }
 
@@ -55,7 +57,7 @@ export async function POST(request: NextRequest) {
             data: parsed.error.format(),
           },
         },
-        { status: 400 }
+        { status: 400, headers: { "X-Request-Id": requestId } }
       );
     }
 
@@ -90,86 +92,86 @@ export async function POST(request: NextRequest) {
                 message: "Invalid params: Expected { name: string, arguments: object }",
                 data: callParams.error.format(),
               },
-            },
-            { status: 400 }
-          );
-        }
-
-        const { name, arguments: args } = callParams.data;
-        const handler = TOOL_HANDLERS[name];
-
-        if (!handler) {
-          return NextResponse.json(
-            {
-              jsonrpc: "2.0",
-              id,
-              error: {
-                code: -32601,
-                message: `Tool not found: ${name}`,
-              },
-            },
-            { status: 404 }
-          );
-        }
-
-        try {
-          const result: ToolResult = await handler(args);
-          return NextResponse.json({
-            jsonrpc: "2.0",
-            id,
-            result: {
-              content: [
-                {
-                  type: "text",
-                  text: typeof result === "string" ? result : JSON.stringify(result),
-                },
-              ],
-            },
-          });
-        } catch (error) {
-          sanitizeError(error);
-          return NextResponse.json(
-            {
-              jsonrpc: "2.0",
-              id,
-              error: {
-                code: -32603,
-                message: "Tool execution failed",
-              },
-            },
-            { status: 500 }
-          );
-        }
-      }
-
-      default: {
-        return NextResponse.json(
-          {
-            jsonrpc: "2.0",
-            id,
-            error: {
-              code: -32601,
-              message: `Method not found: ${method}`,
-            },
-          },
-          { status: 404 }
-        );
-      }
+        },
+        { status: 400, headers: { "X-Request-Id": requestId } }
+      );
     }
-  } catch (error) {
-    sanitizeError(error);
+
+    const { name, arguments: args } = callParams.data;
+    const handler = TOOL_HANDLERS[name];
+
+    if (!handler) {
+      return NextResponse.json(
+        {
+          jsonrpc: "2.0",
+          id,
+          error: {
+            code: -32601,
+            message: `Tool not found: ${name}`,
+          },
+        },
+        { status: 404, headers: { "X-Request-Id": requestId } }
+      );
+    }
+
+    try {
+      const result: ToolResult = await handler(args);
+      return NextResponse.json({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          content: [
+            {
+              type: "text",
+              text: typeof result === "string" ? result : JSON.stringify(result),
+            },
+          ],
+        },
+      }, { headers: { "X-Request-Id": requestId } });
+    } catch (error) {
+      sanitizeError(error);
+      return NextResponse.json(
+        {
+          jsonrpc: "2.0",
+          id,
+          error: {
+            code: -32603,
+            message: "Tool execution failed",
+          },
+        },
+        { status: 500, headers: { "X-Request-Id": requestId } }
+      );
+    }
+  }
+
+  default: {
     return NextResponse.json(
       {
         jsonrpc: "2.0",
-        id: null,
+        id,
         error: {
-          code: -32603,
-          message: "Internal error",
+          code: -32601,
+          message: `Method not found: ${method}`,
         },
       },
-      { status: 500 }
+      { status: 404, headers: { "X-Request-Id": requestId } }
     );
   }
+}
+} catch (error) {
+sanitizeError(error);
+return NextResponse.json(
+  {
+    jsonrpc: "2.0",
+    id: null,
+    error: {
+      code: -32603,
+      message: "Internal error",
+    },
+  },
+  { status: 500, headers: { "X-Request-Id": requestId } }
+);
+}
 }
 
 /**

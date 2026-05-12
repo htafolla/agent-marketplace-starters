@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { rateLimit } from "@/lib/rate-limit";
 import { sanitizeError } from "@/lib/logger";
@@ -58,7 +59,7 @@ export async function GET(request: NextRequest) {
     const skip = (page - 1) * limit;
 
     // Build where clause dynamically
-    const where: any = {};
+    const where: Prisma.AgentWhereInput = {};
 
     if (creatorId) {
       where.walletAddress = creatorId;

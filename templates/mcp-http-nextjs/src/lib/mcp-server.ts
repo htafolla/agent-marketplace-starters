@@ -136,8 +136,11 @@ function isPrivateIP(hostname: string): boolean {
  * Handlers are async and can throw exceptions. The API route catches
  * them and returns JSON-RPC error responses.
  */
+// Constants
+const FETCH_TIMEOUT_MS = 10_000;
+
 export const TOOL_HANDLERS: Record<string, ToolHandler> = {
-  echo: async (args) => {
+  echo: async (args): Promise<ToolResult> => {
     const { message } = EchoSchema.parse(args);
     return {
       message,
@@ -146,7 +149,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     };
   },
 
-  compute: async (args) => {
+  compute: async (args): Promise<ToolResult> => {
     const { a, b, operation } = ComputeSchema.parse(args);
 
     let result: number;
@@ -164,6 +167,8 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
         if (b === 0) throw new Error("Division by zero");
         result = a / b;
         break;
+      default:
+        throw new Error(`Unknown operation: ${operation}`);
     }
 
     return {
@@ -186,7 +191,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       headers: {
         Accept: "application/json",
       },
-      signal: AbortSignal.timeout(10000), // 10 second timeout
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {

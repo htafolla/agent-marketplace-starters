@@ -15,6 +15,10 @@ export interface LogContext {
   [key: string]: unknown;
 }
 
+export function generateRequestId(): string {
+  return crypto.randomUUID();
+}
+
 function createLogger() {
   return {
     error: (message: string, error: unknown, context?: LogContext) => {
