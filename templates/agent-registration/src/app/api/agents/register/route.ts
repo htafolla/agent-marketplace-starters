@@ -139,20 +139,23 @@ export async function POST(request: NextRequest) {
       // Don't block registration for connectivity issues
     }
 
-    // Create agent
-    const agent = await prisma.agent.create({
-      data: {
-        name: data.name,
-        description: data.description,
-        mcpEndpoint: data.mcpEndpoint,
-        walletAddress: ownerAddress,
-        solanaWalletAddress: data.solanaWalletAddress,
-        suiWalletAddress: data.suiWalletAddress,
-        nearWalletAddress: data.nearWalletAddress,
-        pricing: data.pricing,
-        capabilities: data.capabilities,
-        status: "ACTIVE",
-      },
+    // Create agent within transaction for atomicity
+    const agent = await prisma.$transaction(async (tx) => {
+      const created = await tx.agent.create({
+        data: {
+          name: data.name,
+          description: data.description,
+          mcpEndpoint: data.mcpEndpoint,
+          walletAddress: ownerAddress,
+          solanaWalletAddress: data.solanaWalletAddress,
+          suiWalletAddress: data.suiWalletAddress,
+          nearWalletAddress: data.nearWalletAddress,
+          pricing: data.pricing,
+          capabilities: data.capabilities,
+          status: "ACTIVE",
+        },
+      });
+      return created;
     });
 
     return NextResponse.json({
