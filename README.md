@@ -1,5 +1,7 @@
 # Agent Marketplace Starters
 
+<img src="logo.jpg" alt="Agent Marketplace Starters" width="200"/>
+
 Production-ready templates for building agent marketplaces — the hard parts, solved.
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
