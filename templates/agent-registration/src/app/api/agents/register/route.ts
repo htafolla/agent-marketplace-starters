@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { recoverMessageAddress } from "viem";
 import { prisma } from "@/lib/db";
+import { rateLimit } from "@/lib/rate-limit";
+import { logger, sanitizeError } from "@/lib/logger";
 
 /**
  * Agent Registration — Crypto-Verified Ownership
@@ -36,15 +38,41 @@ const RegisterAgentSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  // Rate limit: 5 registrations per hour per IP
+  const ip = request.headers.get("x-forwarded-for") || request.ip || "unknown";
+  const { success: rateLimitOk } = rateLimit(`register:${ip}`, {
+    maxRequests: 5,
+    windowMs: 3600000,
+  });
+
+  if (!rateLimitOk) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Please try again later." },
+      { status: 429 }
+    );
+  }
+
   try {
-    // Extract verification headers
+    // Extract and validate verification headers
+    const HeaderSchema = z.object({
+      address: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+      message: z.string().min(1),
+      signature: z.string().regex(/^0x[a-fA-F0-9]{130}$/), // ECDSA signature length
+    });
+
     const walletAddress = request.headers.get("x-wallet-address");
     const walletMessage = request.headers.get("x-wallet-message");
     const walletSignature = request.headers.get("x-wallet-signature");
 
-    if (!walletAddress || !walletMessage || !walletSignature) {
+    const headerValidation = HeaderSchema.safeParse({
+      address: walletAddress,
+      message: walletMessage,
+      signature: walletSignature,
+    });
+
+    if (!headerValidation.success) {
       return NextResponse.json(
-        { error: "Missing verification headers: x-wallet-address, x-wallet-message, x-wallet-signature" },
+        { error: "Missing or invalid verification headers" },
         { status: 401 }
       );
     }
@@ -52,8 +80,8 @@ export async function POST(request: NextRequest) {
     // Verify signature
     try {
       const recoveredAddress = await recoverMessageAddress({
-        message: walletMessage,
-        signature: walletSignature as `0x${string}`,
+        message: headerValidation.data.message,
+        signature: headerValidation.data.signature as `0x${string}`,
       });
 
       if (recoveredAddress.toLowerCase() !== walletAddress.toLowerCase()) {
@@ -104,10 +132,10 @@ export async function POST(request: NextRequest) {
         signal: AbortSignal.timeout(5000),
       });
       if (!mcpResponse.ok) {
-        console.warn(`MCP endpoint returned ${mcpResponse.status}: ${data.mcpEndpoint}`);
+        logger.warn("MCP endpoint returned non-OK status", { status: mcpResponse.status, endpoint: data.mcpEndpoint });
       }
     } catch {
-      console.warn(`MCP endpoint unreachable: ${data.mcpEndpoint}`);
+      logger.warn("MCP endpoint unreachable", { endpoint: data.mcpEndpoint });
       // Don't block registration for connectivity issues
     }
 
@@ -136,9 +164,9 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    sanitizeError(error);
     return NextResponse.json(
-      { error: `Registration failed: ${message}` },
+      { error: "Registration failed. Please try again later." },
       { status: 500 }
     );
   }

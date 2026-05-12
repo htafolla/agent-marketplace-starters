@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { TOOL_DEFINITIONS, TOOL_HANDLERS, type ToolResult } from "@/lib/mcp-server";
+import { rateLimit } from "@/lib/rate-limit";
+import { sanitizeError } from "@/lib/logger";
 
 // JSON-RPC 2.0 request schema
 const JsonRpcRequestSchema = z.object({
@@ -24,6 +26,20 @@ const JsonRpcRequestSchema = z.object({
  * Methods: tools/list, tools/call
  */
 export async function POST(request: NextRequest) {
+  // Rate limit: 30 requests per minute per IP
+  const ip = request.headers.get("x-forwarded-for") || request.ip || "unknown";
+  const { success: rateLimitOk } = rateLimit(`mcp:${ip}`, {
+    maxRequests: 30,
+    windowMs: 60000,
+  });
+
+  if (!rateLimitOk) {
+    return NextResponse.json(
+      { jsonrpc: "2.0", id: null, error: { code: -32000, message: "Rate limit exceeded" } },
+      { status: 429 }
+    );
+  }
+
   try {
     const body = await request.json();
     const parsed = JsonRpcRequestSchema.safeParse(body);
@@ -111,14 +127,14 @@ export async function POST(request: NextRequest) {
             },
           });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown error";
+          sanitizeError(error);
           return NextResponse.json(
             {
               jsonrpc: "2.0",
               id,
               error: {
                 code: -32603,
-                message: `Tool execution failed: ${message}`,
+                message: "Tool execution failed",
               },
             },
             { status: 500 }
@@ -141,14 +157,14 @@ export async function POST(request: NextRequest) {
       }
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    sanitizeError(error);
     return NextResponse.json(
       {
         jsonrpc: "2.0",
         id: null,
         error: {
           code: -32603,
-          message: `Internal error: ${message}`,
+          message: "Internal error",
         },
       },
       { status: 500 }

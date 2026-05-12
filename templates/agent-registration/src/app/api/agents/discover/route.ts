@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { rateLimit } from "@/lib/rate-limit";
+import { sanitizeError } from "@/lib/logger";
 
 /**
  * Agent Discovery API
@@ -18,6 +20,20 @@ const DiscoverQuerySchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
+  // Rate limit: 60 requests per minute per IP
+  const ip = request.headers.get("x-forwarded-for") || request.ip || "unknown";
+  const { success: rateLimitOk } = rateLimit(`discover:${ip}`, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+
+  if (!rateLimitOk) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Please try again later." },
+      { status: 429 }
+    );
+  }
+
   try {
     const { searchParams } = new URL(request.url);
     
@@ -101,9 +117,9 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    sanitizeError(error);
     return NextResponse.json(
-      { error: `Discovery failed: ${message}` },
+      { error: "Discovery failed. Please try again later." },
       { status: 500 }
     );
   }

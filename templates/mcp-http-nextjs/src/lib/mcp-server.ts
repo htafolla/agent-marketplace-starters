@@ -95,6 +95,37 @@ const FetchDataSchema = z.object({
 });
 
 /**
+ * Check if a hostname is a private/internal IP address.
+ * Prevents SSRF attacks by blocking access to internal services.
+ */
+function isPrivateIP(hostname: string): boolean {
+  // Check for localhost variations
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
+    return true;
+  }
+
+  // Check for IPv4 private ranges
+  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const [, a, b, c, d] = ipv4Match.map(Number);
+    // 10.0.0.0/8
+    if (a === 10) return true;
+    // 172.16.0.0/12
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    // 192.168.0.0/16
+    if (a === 192 && b === 168) return true;
+    // 127.0.0.0/8 (loopback)
+    if (a === 127) return true;
+    // 169.254.0.0/16 (link-local)
+    if (a === 169 && b === 254) return true;
+    // 0.0.0.0/8
+    if (a === 0) return true;
+  }
+
+  return false;
+}
+
+/**
  * Tool Handlers — Imperative Implementations
  * 
  * Each handler:
@@ -144,15 +175,22 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
 
   fetch_data: async (args) => {
     const { url } = FetchDataSchema.parse(args);
+    const parsed = new URL(url);
+
+    // Security: Block private/internal addresses to prevent SSRF
+    if (isPrivateIP(parsed.hostname)) {
+      throw new Error("Access to internal addresses is not allowed");
+    }
 
     const response = await fetch(url, {
       headers: {
         Accept: "application/json",
       },
+      signal: AbortSignal.timeout(10000), // 10 second timeout
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      throw new Error("Failed to fetch data");
     }
 
     const data = await response.json();

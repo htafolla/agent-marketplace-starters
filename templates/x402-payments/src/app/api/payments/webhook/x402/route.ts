@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rateLimit } from "@/lib/rate-limit";
+import { logger, sanitizeError } from "@/lib/logger";
 
 /**
  * x402 Webhook Handler
@@ -8,6 +10,20 @@ import { NextRequest, NextResponse } from "next/server";
  */
 
 export async function POST(request: NextRequest) {
+  // Rate limit: 100 webhooks per minute per IP
+  const ip = request.headers.get("x-forwarded-for") || request.ip || "unknown";
+  const { success: rateLimitOk } = rateLimit(`webhook:${ip}`, {
+    maxRequests: 100,
+    windowMs: 60000,
+  });
+
+  if (!rateLimitOk) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded" },
+      { status: 429 }
+    );
+  }
+
   try {
     const payload = await request.json();
 
@@ -23,20 +39,19 @@ export async function POST(request: NextRequest) {
 
     // Update transaction record
     // In production: await prisma.transaction.update({...})
-    console.log("x402 settlement:", {
+    logger.info("x402 settlement received", {
       txHash,
       status,
       chain,
       amount,
       recipient,
-      settledAt: new Date().toISOString(),
     });
 
     return NextResponse.json({ received: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    sanitizeError(error);
     return NextResponse.json(
-      { error: `Webhook failed: ${message}` },
+      { error: "Webhook processing failed" },
       { status: 500 }
     );
   }

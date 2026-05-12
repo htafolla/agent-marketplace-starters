@@ -1,9 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    // Enable if you need server components for API routes
-    // serverComponentsExternalPackages: ['some-package']
-  },
   async headers() {
     return [
       {
@@ -19,7 +15,7 @@ const nextConfig = {
           },
           {
             key: "Access-Control-Allow-Headers",
-            value: "Content-Type,Authorization",
+            value: "Content-Type,Authorization,x-wallet-address,x-wallet-message,x-wallet-signature",
           },
           {
             key: "X-Content-Type-Options",

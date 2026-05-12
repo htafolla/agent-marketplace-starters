@@ -62,6 +62,7 @@ export async function handleX402Payment(
         ...headers,
       },
       body: JSON.stringify(params),
+      signal: AbortSignal.timeout(30000), // 30 second timeout
     });
 
     // If payment not required, return response directly
@@ -105,6 +106,7 @@ export async function handleX402Payment(
         ...headers,
       },
       body: JSON.stringify(params),
+      signal: AbortSignal.timeout(30000), // 30 second timeout
     });
 
     const retryData = await retryResponse.json();

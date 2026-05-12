@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { rateLimit } from "@/lib/rate-limit";
+import { sanitizeError } from "@/lib/logger";
 
 /**
  * Payment Charge API — 402 Response Handler
@@ -16,6 +18,20 @@ const ChargeSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  // Rate limit: 20 charge requests per minute per IP
+  const ip = request.headers.get("x-forwarded-for") || request.ip || "unknown";
+  const { success: rateLimitOk } = rateLimit(`charge:${ip}`, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+
+  if (!rateLimitOk) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Please try again later." },
+      { status: 429 }
+    );
+  }
+
   try {
     const body = await request.json();
     const parsed = ChargeSchema.safeParse(body);
@@ -57,9 +73,9 @@ export async function POST(request: NextRequest) {
       { status: 402 }
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    sanitizeError(error);
     return NextResponse.json(
-      { error: `Charge failed: ${message}` },
+      { error: "Charge failed. Please try again later." },
       { status: 500 }
     );
   }
@@ -79,11 +95,12 @@ function getAgentWalletAddress(agentId: string, chain: string): string | null {
 
 // Helper: Get USDC contract address per chain
 function getAssetAddress(chain: string): string {
+  // In production, load from environment variables
   const addresses: Record<string, string> = {
-    base: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    solana: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    near: "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
-    sui: "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
+    base: process.env.USDC_BASE || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    solana: process.env.USDC_SOLANA || "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    near: process.env.USDC_NEAR || "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+    sui: process.env.USDC_SUI || "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
   };
   return addresses[chain] || addresses.base;
 }
