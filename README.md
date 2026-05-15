@@ -58,8 +58,10 @@ Each template follows these principles:
 | Resource | Scope | Best For |
 |----------|-------|----------|
 | **MCP Official Quickstart** | Standalone stdio/SSE servers | Learning MCP basics |
-| **chrono-warp-drive template** | Standalone Hono SSE server | Railway-deployed MCP tools |
-| **These starters** | Integrated marketplace patterns | Production agent platforms |
+| **chrono-warp-drive template** | Hono SSE + Streamable HTTP | Railway-deployed MCP tools |
+| **These starters** | Next.js Streamable HTTP (in-process) | Production agent platforms |
+
+> **Streamable HTTP** is the recommended MCP transport for web-deployed agents. It uses direct JSON-RPC 2.0 over HTTP POST (no SSE, no separate process). Grok CLI, Claude, and Cursor all support it natively. Configure with `url = "https://your-app/api/mcp"` — no `/sse` suffix needed.
 
 ## Contributing
 

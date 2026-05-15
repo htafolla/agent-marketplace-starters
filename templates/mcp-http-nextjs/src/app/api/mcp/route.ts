@@ -14,16 +14,18 @@ const JsonRpcRequestSchema = z.object({
 
 /**
  * MCP HTTP Endpoint — Embedded in Next.js API Route
- * 
+ *
  * Architecture Decision:
- * We use HTTP transport instead of stdio/SSE because:
+ * We use Streamable HTTP transport (not stdio/SSE) because:
  * 1. Next.js API routes are HTTP-native
  * 2. No separate process to manage
  * 3. Auth middleware works out of the box
  * 4. Deploys with the same `vercel --prod`
- * 
- * Protocol: JSON-RPC 2.0 over HTTP POST
- * Methods: tools/list, tools/call
+ * 5. Compatible with Claude, Grok CLI, Cursor, and all MCP clients
+ *
+ * Protocol: MCP Streamable HTTP / JSON-RPC 2.0 over HTTP POST
+ * Methods: initialize, ping, tools/list, tools/call
+ * Notifications: initialized (returns 202 with no body)
  */
 export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
@@ -63,16 +65,36 @@ export async function POST(request: NextRequest) {
 
     const { id, method, params } = parsed.data;
 
+    // Notifications: JSON-RPC requests without an id.
+    // Per MCP Streamable HTTP spec, return 202 with empty body.
+    if (id === undefined) {
+      return new NextResponse(null, {
+        status: 202,
+        headers: { "X-Request-Id": requestId },
+      });
+    }
+
     switch (method) {
-      case "tools/list": {
+      case "initialize":
         return NextResponse.json({
           jsonrpc: "2.0",
           id,
           result: {
-            tools: TOOL_DEFINITIONS,
+            protocolVersion: "2024-11-05",
+            capabilities: { tools: {} },
+            serverInfo: { name: "mcp-http-nextjs", version: "0.1.0" },
           },
         });
-      }
+
+      case "ping":
+        return NextResponse.json({ jsonrpc: "2.0", id, result: {} });
+
+      case "tools/list":
+        return NextResponse.json({
+          jsonrpc: "2.0",
+          id,
+          result: { tools: TOOL_DEFINITIONS },
+        });
 
       case "tools/call": {
         const callParams = z
@@ -92,86 +114,79 @@ export async function POST(request: NextRequest) {
                 message: "Invalid params: Expected { name: string, arguments: object }",
                 data: callParams.error.format(),
               },
-        },
-        { status: 400, headers: { "X-Request-Id": requestId } }
-      );
-    }
-
-    const { name, arguments: args } = callParams.data;
-    const handler = TOOL_HANDLERS[name];
-
-    if (!handler) {
-      return NextResponse.json(
-        {
-          jsonrpc: "2.0",
-          id,
-          error: {
-            code: -32601,
-            message: `Tool not found: ${name}`,
-          },
-        },
-        { status: 404, headers: { "X-Request-Id": requestId } }
-      );
-    }
-
-    try {
-      const result: ToolResult = await handler(args);
-      return NextResponse.json({
-        jsonrpc: "2.0",
-        id,
-        result: {
-          content: [
-            {
-              type: "text",
-              text: typeof result === "string" ? result : JSON.stringify(result),
             },
-          ],
-        },
-      }, { headers: { "X-Request-Id": requestId } });
-    } catch (error) {
-      sanitizeError(error);
-      return NextResponse.json(
-        {
-          jsonrpc: "2.0",
-          id,
-          error: {
-            code: -32603,
-            message: "Tool execution failed",
-          },
-        },
-        { status: 500, headers: { "X-Request-Id": requestId } }
-      );
-    }
-  }
+            { status: 400, headers: { "X-Request-Id": requestId } }
+          );
+        }
 
-  default: {
+        const { name, arguments: args } = callParams.data;
+        const handler = TOOL_HANDLERS[name];
+
+        if (!handler) {
+          return NextResponse.json(
+            {
+              jsonrpc: "2.0",
+              id,
+              error: {
+                code: -32601,
+                message: `Tool not found: ${name}`,
+              },
+            },
+            { status: 404, headers: { "X-Request-Id": requestId } }
+          );
+        }
+
+        try {
+          const result: ToolResult = await handler(args);
+          return NextResponse.json(
+            {
+              jsonrpc: "2.0",
+              id,
+              result: {
+                content: [
+                  {
+                    type: "text",
+                    text: typeof result === "string" ? result : JSON.stringify(result),
+                  },
+                ],
+              },
+            },
+            { headers: { "X-Request-Id": requestId } }
+          );
+        } catch (error) {
+          sanitizeError(error);
+          return NextResponse.json(
+            {
+              jsonrpc: "2.0",
+              id,
+              error: { code: -32603, message: "Tool execution failed" },
+            },
+            { status: 500, headers: { "X-Request-Id": requestId } }
+          );
+        }
+      }
+
+      default:
+        return NextResponse.json(
+          {
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32601, message: `Method not found: ${method}` },
+          },
+          { status: 404, headers: { "X-Request-Id": requestId } }
+        );
+    }
+  } catch (error) {
+    sanitizeError(error);
     return NextResponse.json(
       {
         jsonrpc: "2.0",
-        id,
-        error: {
-          code: -32601,
-          message: `Method not found: ${method}`,
-        },
+        id: null,
+        error: { code: -32603, message: "Internal error" },
       },
-      { status: 404, headers: { "X-Request-Id": requestId } }
+      { status: 500, headers: { "X-Request-Id": requestId } }
     );
   }
-}
-} catch (error) {
-sanitizeError(error);
-return NextResponse.json(
-  {
-    jsonrpc: "2.0",
-    id: null,
-    error: {
-      code: -32603,
-      message: "Internal error",
-    },
-  },
-  { status: 500, headers: { "X-Request-Id": requestId } }
-);
-}
 }
 
 /**

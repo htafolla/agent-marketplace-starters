@@ -3,14 +3,19 @@ import { POST, GET } from "./route";
 
 describe("MCP API Route", () => {
   describe("POST /api/mcp", () => {
-    it("should list tools", async () => {
+    it("should handle initialize handshake", async () => {
       const request = new Request("http://localhost:3000/api/mcp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
           id: 1,
-          method: "tools/list",
+          method: "initialize",
+          params: {
+            protocolVersion: "2024-11-05",
+            capabilities: {},
+            clientInfo: { name: "test-client", version: "1.0" },
+          },
         }),
       });
 
@@ -19,6 +24,66 @@ describe("MCP API Route", () => {
 
       expect(data.jsonrpc).toBe("2.0");
       expect(data.id).toBe(1);
+      expect(data.result.protocolVersion).toBe("2024-11-05");
+      expect(data.result.capabilities.tools).toBeDefined();
+      expect(data.result.serverInfo.name).toBe("mcp-http-nextjs");
+    });
+
+    it("should handle ping", async () => {
+      const request = new Request("http://localhost:3000/api/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" }),
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(data.jsonrpc).toBe("2.0");
+      expect(data.id).toBe(2);
+      expect(data.result).toEqual({});
+    });
+
+    it("should return 202 for notifications (no id)", async () => {
+      const request = new Request("http://localhost:3000/api/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(202);
+      const text = await response.text();
+      expect(text).toBe("");
+    });
+
+    it("should return 202 for initialized notification", async () => {
+      const request = new Request("http://localhost:3000/api/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "initialized" }),
+      });
+
+      const response = await POST(request);
+      expect(response.status).toBe(202);
+    });
+
+    it("should list tools", async () => {
+      const request = new Request("http://localhost:3000/api/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 3,
+          method: "tools/list",
+        }),
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(data.jsonrpc).toBe("2.0");
+      expect(data.id).toBe(3);
       expect(data.result.tools).toBeDefined();
       expect(data.result.tools.length).toBeGreaterThan(0);
       expect(response.headers.get("X-Request-Id")).toBeDefined();
@@ -30,7 +95,7 @@ describe("MCP API Route", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
-          id: 2,
+          id: 4,
           method: "tools/call",
           params: {
             name: "echo",
@@ -43,7 +108,7 @@ describe("MCP API Route", () => {
       const data = await response.json();
 
       expect(data.jsonrpc).toBe("2.0");
-      expect(data.id).toBe(2);
+      expect(data.id).toBe(4);
       expect(data.result.content[0].text).toContain("test");
     });
 
@@ -53,12 +118,9 @@ describe("MCP API Route", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
-          id: 3,
+          id: 5,
           method: "tools/call",
-          params: {
-            name: "nonexistent",
-            arguments: {},
-          },
+          params: { name: "nonexistent", arguments: {} },
         }),
       });
 
@@ -90,7 +152,7 @@ describe("MCP API Route", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
-          id: 4,
+          id: 6,
           method: "unknown/method",
         }),
       });
@@ -108,7 +170,7 @@ describe("MCP API Route", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
-          id: 5,
+          id: 7,
           method: "tools/call",
           params: {},
         }),
@@ -127,12 +189,9 @@ describe("MCP API Route", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
-          id: 6,
+          id: 8,
           method: "tools/call",
-          params: {
-            name: "compute",
-            arguments: { a: 10, b: 0, operation: "divide" },
-          },
+          params: { name: "compute", arguments: { a: 10, b: 0, operation: "divide" } },
         }),
       });
 

@@ -17,7 +17,31 @@ The official MCP examples use standalone Python/Node servers with stdio or SSE t
 Client (Claude/Grok/Cursor) → POST /api/mcp → Next.js API Route → Your Business Logic
 ```
 
-The API route speaks JSON-RPC 2.0 over HTTP. Tools are defined declaratively with Zod schemas. Handlers are plain async functions with full access to your app's infrastructure.
+The API route speaks **MCP Streamable HTTP** (JSON-RPC 2.0 over HTTP POST). This transport is supported by all major MCP clients including Claude, Grok CLI, and Cursor — no SSE or stdio required.
+
+### How It Works
+
+Standard MCP handshake (handled automatically by the route):
+
+```
+Client                            Server
+  │                                 │
+  │ POST /api/mcp (initialize)      │
+  │ ───────────────────────────────►│
+  │◄─────────────────────────────── │ { protocolVersion, capabilities, serverInfo }
+  │                                 │
+  │ POST /api/mcp (initialized)     │  ← notification, no id
+  │ ───────────────────────────────►│
+  │                   202 (no body) │  ← notifications return empty 202
+  │                                 │
+  │ POST /api/mcp (tools/list)      │
+  │ ───────────────────────────────►│
+  │◄─────────────────────────────── │ { tools: [...] }
+  │                                 │
+  │ POST /api/mcp (tools/call)      │
+  │ ───────────────────────────────►│
+  │◄─────────────────────────────── │ { content: [...] }
+```
 
 ## Quick Start
 
@@ -47,6 +71,35 @@ curl -X POST http://localhost:3000/api/mcp \
     }
   }'
 ```
+
+## Grok CLI Configuration
+
+Add to `~/.grok/config.toml`:
+
+```toml
+[mcp_servers.my-agent]
+url = "https://your-app.vercel.app/api/mcp"
+enabled = true
+```
+
+The Grok CLI auto-detects Streamable HTTP transport and runs the full MCP handshake: `initialize` → `initialized` (notification) → `tools/list` → `tools/call`.
+
+Verify connectivity:
+
+```bash
+grok mcp doctor
+```
+
+Expected output:
+
+```
+my-agent (http: https://your-app.vercel.app/api/mcp)
+  ✓ server started
+  ✓ handshake OK (protocol 2024-11-05)
+  ✓ 3 tools discovered
+```
+
+> **Note on the /sse pattern:** If you previously configured an SSE-based MCP server with a `/sse` suffix, the Grok CLI ignores the path and uses the base URL as the Streamable HTTP endpoint. Remove the `/sse` suffix — the correct URL is just `https://your-app.vercel.app/api/mcp`.
 
 ## Adding Tools
 
@@ -121,13 +174,40 @@ Tests use Vitest and verify JSON-RPC protocol compliance.
 
 ## Protocol Details
 
-This implements a subset of MCP over HTTP:
+Implements **MCP Streamable HTTP** transport (JSON-RPC 2.0 over HTTP POST):
 
-- `POST /api/mcp` — JSON-RPC 2.0 endpoint
-- Methods: `tools/list`, `tools/call`
-- Authentication: Pass session token in `Authorization` header (handled by your existing auth)
+### Supported Methods
 
-For full MCP spec compliance (resources, prompts, sampling), extend the method switch in `route.ts`.
+| Method | Type | Description |
+|--------|------|-------------|
+| `initialize` | Request | Handshake — returns protocol version, capabilities, server info |
+| `ping` | Request | Health check — returns `{}` |
+| `tools/list` | Request | Returns available tool definitions |
+| `tools/call` | Request | Invokes a tool by name with arguments |
+| `initialized` | Notification | Acknowledges handshake (returns 202) |
+| `notifications/initialized` | Notification | Alternative notification name (returns 202) |
+
+### Notifications
+
+JSON-RPC requests without an `id` field are treated as notifications per the MCP Streamable HTTP spec. The server responds with **HTTP 202** and an empty body. This is required by Grok CLI and other strict MCP clients.
+
+### Error Codes
+
+| Code | Meaning | HTTP Status |
+|------|---------|-------------|
+| `-32700` | Parse error | 400 |
+| `-32601` | Method/tool not found | 404 |
+| `-32602` | Invalid params | 400 |
+| `-32603` | Internal error | 500 |
+| `-32000` | Rate limit exceeded | 429 |
+
+### Authentication
+
+Pass session token in `Authorization` header (handled by your existing auth middleware).
+
+### Extending
+
+For resources, prompts, or sampling support, add cases to the `switch` statement in `src/app/api/mcp/route.ts`.
 
 ## License
 
